@@ -1,0 +1,13 @@
+name: malaria-hf
+title: malaria-hf
+username:
+account: jjmillar
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 854784
+bundleId: 2016849
+url: https://jjmillar.shinyapps.io/malaria-hf/
+when: 1555448336.30003
+asMultiple: FALSE
+asStatic: FALSE
+ignoredFiles: functions.R
