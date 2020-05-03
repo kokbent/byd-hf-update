@@ -1,10 +1,9 @@
+rm(list = ls())
+
 library(shiny)
 library(shinydashboard)
 library(leaflet)
-library(tidyverse)
 library(geosphere)
-library(sp)
-library(rgdal)
 library(raster)
 library(htmltools)
 library(mgcv)
@@ -12,74 +11,58 @@ library(splines)
 library(DT)
 library(gdistance)
 library(mapview)
+library(dplyr)
+library(readr)
+library(ggplot2)
 
-load('datafiles/gam_mod.rda')
-
-area.shape <- readOGR("shp/Study_Area_NEW.shp")
-
-left   <- -2.0
-right  <- 0.0
-bottom <- 50.0
-top    <- 52.0
-transition.matrix.exists.flag <- 0 # if the geo-corrected graph has already been made, this can save time.  Uses the same T.GC.filename as specified using the T.GC.filename variable.
-T.filename <- 'study.area.T.rds'
-T.GC.filename <- 'study.area.T.GC.rds'
-fs1 <- raster("shp/friction-crop.tif")
-
+#### Import
+load('datafiles/gam_mod_v2.rda')
+T.GC <- readRDS("datafiles/T_GC.rds")
 hf_org <- read_csv("datafiles/hf-locations.csv") 
-outline <- sf::st_read("shp/Study_Area_NEW.shp")
-grid <- sf::st_read("shp/grid_data_update.shp") %>% 
-  mutate(prv_pdt_org  = prv_pdt, 
-         cas_pdt_org = cas_pdt, 
-         prv_diff = prv_pdt - prv_pdt_org, 
-         cas_diff = cas_pdt - cas_pdt_org)
+outline <- shapefile("shp/Study_Area_NEW.shp")
+grid_df <- read_csv("datafiles/grid_data.csv")
 
-# Functions
+#### Initialize
+grid_df <- grid_df %>% 
+  mutate(prev = predict(gam_mod, grid_df, type = "response") %>% as.vector,
+         incd = (prev * pop_den) %>% as.vector)
+prev_org <- mean(grid_df$prev)
+incd_org <- sum(grid_df$incd)
+
+#### Functions
 update_prediction <- function(hfs) {
   
   points <- hfs %>% 
     dplyr::select(x = Longitude, y = Latitude)
-  temp <- dim(points)
-  n.points <- temp[1]
-  
-  # Calculate time raster
-  if (transition.matrix.exists.flag == 1) {
-    T.GC <- readRDS(T.GC.filename)
-  } else {
-    t <- transition(fs1, function(x) 1/mean(x), 8) # RAM intensive, can be very slow for large areas
-    T.GC <- geoCorrection(t)
-  }
   
   # Convert the points into a matrix
-  xy.data.frame <- data.frame()
-  xy.data.frame[1:n.points,1] <- points[,1]
-  xy.data.frame[1:n.points,2] <- points[,2]
-  xy.matrix <- as.matrix(xy.data.frame)
+  xy.matrix <- points %>%
+    as.data.frame() %>%
+    as.matrix()
   
   # Run the accumulated cost algorithm to make the final output map. This can be quite slow (potentially hours).
   temp.raster <- accCost(T.GC, xy.matrix)
   
-  grid_loc <- grid %>% 
-    as.data.frame() %>% 
-    dplyr::select(lng, lat) # Just 2 columns.  Structured as [X_COORD, Y_COORD] aka [LONG, LAT].  Use a header
+  grid_newdf <- grid_df
+  grid_xy <- grid_newdf[,c("x", "y")] %>%
+    as.matrix()
+  grid_newdf$time_hf <- raster::extract(temp.raster, grid_xy)
   
-  grid <- grid %>% 
-    mutate(time_hf  = extract(temp.raster, grid_loc), 
-           prev     = predict(gam_mod, grid, type = "response"), 
-           cases    = prev*grid$pop_den,
-           prv_pdt  = if_else(ck_full == 1, prev, NA_real_), 
-           cas_pdt  = if_else(ck_full == 1, cases, NA_real_), 
-           prv_diff = prv_pdt - prv_pdt_org, 
-           cas_diff = cas_pdt - cas_pdt_org)
+  grid_newdf <- grid_newdf %>% 
+    mutate(prev = predict(gam_mod, grid_newdf, type = "response") %>% as.vector,
+           incd = (prev * pop_den) %>% as.vector)
   
-  return(grid)
+  return(grid_newdf)
 }
+
 icon_color <- function(type) {
   case_when(
     type == "CHPS" ~ "red", 
     type == "Health Center" ~ "blue", 
-    type == "User Defined" ~ "cadetblue")
+    type == "User Defined" ~ "cadetblue"
+  )
 }
+
 get_domain <- function(x){
   tmp <- max(abs(x))
   out <- ifelse(is.na(tmp), 0.0001, tmp)
@@ -87,9 +70,12 @@ get_domain <- function(x){
   return(out)
 }
 
-sum_prev <- sum(grid$prv_pdt_org, na.rm = T)
-sum_case <- sum(grid$cas_pdt_org, na.rm = T)
+p2i_0_to_5 <- function(x) {
+  # Prev to Incidence per person-year
+  return(2.38*x + 3.92*x^2 - 9.30*x^3 + 5.57*x^4 - 0.53*x^5)
+}
 
+#### UI
 header <- dashboardHeader(
   title = "BYD Health Facilities"
 )
@@ -105,24 +91,44 @@ body <- dashboardBody(
            )
     ),
     column(width = 3,
-
+           
+           box(width = NULL, status = "warning",
+               title = "Choose metric to display",
+               radioButtons("param", "For children under 5 years old",
+                            c("Prevalence (0 to 1)" = "prev",
+                              "Incidence (Number of cases per year)" = "incd"))
+           ),
+           
+           infoBoxOutput("prev_overall", width = NULL),
+           
+           infoBoxOutput("incd_overall", width = NULL),
+           
            box(width = NULL, status = "warning",
                title = "Add new health facility",
                p(class = "text-muted",
-                 "Click on the map to load a new Lat/Long for a propose location, 
-                 and press the button below to refit the model."
+                 "Click on the map and press the \"Add Facility\" button below 
+                 to add new facilities. You can do it repeatedly to add more facilities."
+               ),
+               p(class = "text-muted",
+                 "After adding all new facilities, press \"Re-fit Model\" to update the map.
+                 You can keep adding facilities after updating the map."
+               ),
+               p(class = "text-muted",
+                 "Press \"Reset Now\" button
+                 to remove all proposed facilities and revert to initial map."
                ),
                uiOutput("new_hf_text"),
-               # actionButton("add_hf", "Add Facility"), 
-               actionButton("refit", "Re-fit Model")
-           ),
-           box(width = NULL, status = "warning",
-               title = "Reset",
-               p(class = "text-muted",
-                 "Reload app to remove added health facilities."
-               ),
+               actionButton("add_coord", "Add Facility"),
+               actionButton("refit", "Re-fit Model"),
                actionButton("reset", "Reset Now")
            )
+           # box(width = NULL, status = "warning",
+           #     title = "Reset",
+           #     p(class = "text-muted",
+           #       "Reload app to remove added health facilities."
+           #     ),
+           #     actionButton("reset", "Reset Now")
+           # )
     )
   )
 )
@@ -133,17 +139,23 @@ ui <- dashboardPage(
   body
 )
 
+
+#### Server logics
 server <- function(input, output) {
+  tmp <- reactiveValues()
+  tmp$hf_data <- hf_org
+  tmp$grid <- grid_df
+  
   vals <- reactiveValues()
   vals$hf_data <- hf_org
-  vals$grid <- grid
+  vals$grid <- grid_df
   
   output$hf_table=renderDataTable({vals$hf_data})
   
   output$new_hf_text <- renderUI({
     
-    lat <- unlist(input$prev_map_shape_click$lat)
-    lon <- unlist(input$prev_map_shape_click$lng)
+    lat <- unlist(input$prev_map_click$lat)
+    lon <- unlist(input$prev_map_click$lng)
 
     new_loc <- sprintf("<strong>New Location:</strong> <br> Lat: %f <br> Lng: %f",
                        lat, lon) %>%
@@ -153,107 +165,132 @@ server <- function(input, output) {
   })
 
  output$prev_map <- renderLeaflet({
-  
-  prev_pal <- colorNumeric(palette = "inferno", na.color = "#E1E1DD", domain = c(0,1))
-  case_pal <- colorNumeric(palette = "inferno", na.color = "#E1E1DD", domain = c(0, 200))
-  
-  # Get max values for setting diverging color palette
-  # m_prev <- get_domain(vals$grid$prv_diff) + 0.001
-  # m_case <- get_domain(vals$grid$cas_diff) + 1
-  # m_prev <- max(abs(vals$grid$prv_diff))
-  # m_case <- max(abs(vals$grid$cas_diff))
-  
-  # prev_diff_pal <- colorNumeric(palette = "RdBu", na.color = "#E1E1DD", domain = c(-m_prev, m_prev))
-  # case_diff_pal <- colorNumeric(palette = "RdBu", na.color = "#E1E1DD", domain = c(-m_case, m_case))
-  prev_diff_pal <- colorNumeric(palette = "RdBu", na.color = "#E1E1DD", domain = c(-0.02, 0.02), reverse = T)
-  case_diff_pal <- colorNumeric(palette = "RdBu", na.color = "#E1E1DD", domain = c(-5, 5), reverse = T)
-  
+  # Graphics
+  prev_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(0, 1))
+  incd_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(0, 300))
   icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
                         markerColor = icon_color(vals$hf_data$Type))
-
-  prev_map <- leaflet(vals$grid) %>%
+  
+  # Base map
+  prev_map <- leaflet() %>%
+    addTiles() %>%
     addPolygons(data = outline,
                 color = "black",
                 weight = 2,
                 opacity = 1,
                 fillOpacity = 0) %>%
-    addPolygons(color = "NULL",
-                weight = 0, 
-                fillColor = ~prev_pal(prv_pdt), 
-                fillOpacity = 1,
-                group = "Prevalence", 
-                label = sprintf("Prevalence: %.3f", vals$grid$prv_pdt) %>% 
-                  lapply(htmltools::HTML)) %>%
-    addPolygons(color = "NULL",
-                weight = 0, 
-                fillColor = ~case_pal(cas_pdt), 
-                fillOpacity = 1,
-                group = "Cases", 
-                label = sprintf("Exp. # of Cases: %.2f", vals$grid$cas_pdt) %>% 
-                  lapply(htmltools::HTML)) %>%
-    addPolygons(color = "NULL",
-                weight = 0, 
-                fillColor = ~prev_diff_pal(prv_diff), 
-                fillOpacity = 1,
-                group = "Diff. Prev", 
-                label = sprintf("Change in Prevalence: %.3f", vals$grid$prv_diff) %>% 
-                  lapply(htmltools::HTML)) %>%
-    addPolygons(color = "NULL",
-                weight = 0, 
-                fillColor = ~case_diff_pal(cas_diff), 
-                fillOpacity = 1,
-                group = "Diff. Cases", 
-                label = sprintf("Change in Exp. # of Cases: %.2f", vals$grid$cas_diff) %>% 
-                  lapply(htmltools::HTML)) %>%
     addAwesomeMarkers(data = vals$hf_data,
                       lng = vals$hf_data$Longitude,
                       lat = vals$hf_data$Latitude,
-                      popup = vals$hf_data$Name, 
-                      icon = icons) %>%
-    addLegend(pal = prev_pal, values = ~prv_pdt, na.label = NULL, 
-              title = "Prevalence:", 
-              group = "Prevalence legend") %>%
-    addLegend(pal = case_pal, values = ~cas_pdt,
-              title = "Est. Cases:", 
-              group = "Cases legend") %>%
-    addLegend(pal = prev_diff_pal, values = ~prv_diff,
-              title = "Change in Prevalence",
-              group = "Diff. Prev legend") %>%
-    addLegend(pal = case_diff_pal, values = ~cas_diff,
-              title = "Change in Exp. Cases",
-              group = "Diff. Cases legend") %>%
-    addProviderTiles(providers$OpenStreetMap.BlackAndWhite) %>% 
-    addMiniMap(tiles = providers$OpenStreetMap.BlackAndWhite, 
-               position = "bottomleft",
-               toggleDisplay = TRUE, width = 120, height = 120) %>% 
-    mapview::addMouseCoordinates() %>%
-    addLayersControl(
-      baseGroups = c("Prevalence", "Cases", "Diff. Prev", "Diff. Cases"), 
-      overlayGroups = c("Prevalence legend", "Cases legend", "Diff. Prev legend", "Diff. Cases legend"),
-      position = "bottomleft",
-      options = layersControlOptions(collapsed = TRUE)
-    ) 
+                      popup = vals$hf_data$Name,
+                      icon = icons)
+  
+  # Prevalence or Incidence?
+  if (input$param == "prev") {
+    ras <- vals$grid[,c("x", "y", "prev")] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
+    prev_map <- prev_map %>%
+      addRasterImage(x = ras,
+                     colors = prev_pal,
+                     opacity = 0.5) %>%
+      addLegend(pal = prev_pal, values = 0:4 * 0.25,
+                title = "Prevalence:",
+                group = "Prevalence legend") %>%
+      mapview::addMouseCoordinates()
+  } else {
+    ras <- vals$grid[,c("x", "y", "incd")] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
+    prev_map <- prev_map %>%
+      addRasterImage(x = ras,
+                     colors = incd_pal,
+                     opacity = 0.5) %>%
+      addLegend(pal = incd_pal, values = 0:6 * 50,
+                title = "Incidence (per yr):",
+                group = "Incidence legend") %>%
+      mapview::addMouseCoordinates()
+  }
+  
+    # addLayersControl(
+    #   baseGroups = c("Prevalence", "Cases", "Diff. Prev", "Diff. Cases"),
+    #   overlayGroups = c("Prevalence legend", "Cases legend", "Diff. Prev legend", "Diff. Cases legend"),
+    #   position = "bottomleft",
+    #   options = layersControlOptions(collapsed = F)
+    # )
   prev_map
   })
+ 
+ output$prev_overall <- renderInfoBox({
+   infoBox(
+     "Mean prevalence per pixel",
+     value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
+     subtitle = ifelse(nrow(vals$hf_data) == nrow(hf_org), "",
+                       paste0(round(mean(vals$grid$prev) - prev_org, 3) * 100, 
+                              "% from initial map")),
+     icon = icon("heart"),
+     color = "purple"
+   )
+ })
+ 
+ output$incd_overall <- renderInfoBox({
+   infoBox(
+     "Total incidence per year",
+     value = round(sum(vals$grid$incd), 1),
+     subtitle = ifelse(nrow(vals$hf_data) == nrow(hf_org), "",
+                       paste0(round(sum(vals$grid$incd) - incd_org, 1), 
+                              " from initial map")),
+     icon = icon("ambulance"),
+     color = "red"
+   )
+ })
  
  observeEvent(input$refit, {
    lat <- unlist(input$prev_map_shape_click$lat)
    lon <- unlist(input$prev_map_shape_click$lng)
    
-   vals$hf_data <- vals$hf_data %>% 
+   vals$hf_data <- tmp$hf_data
+   vals$grid <- update_prediction(vals$hf_data)
+ })
+ 
+ observeEvent(input$add_coord, {
+   lat <- unlist(input$prev_map_click$lat)
+   lon <- unlist(input$prev_map_click$lng)
+   
+   tmp$hf_data <- tmp$hf_data %>% 
      add_case(
-       Name = "New Facility",
+       Name = "Added Facility",
        Latitude = round(lat, 3), 
        Longitude = round(lon, 3),
        Type = "User Defined")
    
-   vals$grid <- update_prediction(vals$hf_data)
+   icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
+                         markerColor = icon_color(tmp$hf_data$Type))
+   
+   proxy <- leafletProxy("prev_map")
+   proxy %>% clearMarkers() %>%
+     addAwesomeMarkers(data = tmp$hf_data,
+                       lng = tmp$hf_data$Longitude,
+                       lat = tmp$hf_data$Latitude,
+                       popup = tmp$hf_data$Name, 
+                       icon = icons)
+ })
+ 
+ 
+ observeEvent(input$prev_map_click, {
+   click <- input$prev_map_click
+   
+   proxy <- leafletProxy("prev_map")
+   proxy %>% 
+     clearGroup("new_point") %>%
+     addCircles(click$lng, click$lat, radius=10, color="red", group = "new_point")
+   
  })
  
  observeEvent(input$reset, {
    vals$hf_data <- hf_org
-   vals$grid <- grid
+   vals$grid <- grid_df
+   tmp$hf_data <- hf_org
+   tmp$grid <- grid_df
  })  
 }
- 
+
+
+#### Execute
 shinyApp(ui, server)
