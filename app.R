@@ -94,7 +94,7 @@ body <- dashboardBody(
            
            box(width = NULL, status = "warning",
                title = "Choose metric to display",
-               radioButtons("param", "For children under 5 years old",
+               radioButtons("metric", "For children under 5 years old",
                             c("Prevalence (0 to 1)" = "prev",
                               "Incidence (Number of cases per year)" = "incd"))
            ),
@@ -121,7 +121,21 @@ body <- dashboardBody(
                actionButton("add_coord", "Add Facility"),
                actionButton("refit", "Re-fit Model"),
                actionButton("reset", "Reset Now")
-           )
+           ),
+           
+           box(width = NULL, status = "warning",
+               title = "Optimal locations for new health facilities (Under development)",
+               p(class = "text-muted",
+                 "Choose the metric to optimize, and then choose the number of
+                 new health facilities to be added. Press \"Optimize\" and the app will
+                 display the optimal locations that would reduce the chosen metric as much
+                 as possible."
+               ),
+               radioButtons("opt-metric", "For children under 5 years old",
+                            c("Prevalence" = "prev", "Incidence" = "incd"), inline = T),
+               sliderInput("opt-nhf", "Number of health facilities to be added",
+                           min = 1, max = 7, value = 1, step = 1)
+               )
            # box(width = NULL, status = "warning",
            #     title = "Reset",
            #     p(class = "text-muted",
@@ -186,7 +200,7 @@ server <- function(input, output) {
                       icon = icons)
   
   # Prevalence or Incidence?
-  if (input$param == "prev") {
+  if (input$metric == "prev") {
     ras <- vals$grid[,c("x", "y", "prev")] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
     prev_map <- prev_map %>%
       addRasterImage(x = ras,
