@@ -5,15 +5,17 @@ library(shinydashboard)
 library(leaflet)
 library(geosphere)
 library(raster)
+library(rgdal)
 library(htmltools)
 library(mgcv)
 library(splines)
-library(DT)
+# library(DT)
 library(gdistance)
 library(mapview)
 library(dplyr)
 library(readr)
 library(ggplot2)
+library(tibble)
 
 #### Import
 load('datafiles/gam_mod_v2.rda')
@@ -23,9 +25,15 @@ outline <- shapefile("shp/Study_Area_NEW.shp")
 grid_df <- read_csv("datafiles/grid_data.csv")
 
 #### Initialize
+p2i_0_to_5 <- function(x) {
+  # Prev to Incidence per person-year
+  return(2.38*x + 3.92*x^2 - 9.30*x^3 + 5.57*x^4 - 0.53*x^5)
+}
+
 grid_df <- grid_df %>% 
-  mutate(prev = predict(gam_mod, grid_df, type = "response") %>% as.vector,
-         incd = (prev * pop_den) %>% as.vector)
+  mutate(prev = predict(gam_mod, grid_df, type = "response") %>% as.vector) %>%
+  mutate(incd = (p2i_0_to_5(prev) * pop_den) %>% as.vector)
+         
 prev_org <- mean(grid_df$prev)
 incd_org <- sum(grid_df$incd)
 
@@ -49,8 +57,8 @@ update_prediction <- function(hfs) {
   grid_newdf$time_hf <- raster::extract(temp.raster, grid_xy)
   
   grid_newdf <- grid_newdf %>% 
-    mutate(prev = predict(gam_mod, grid_newdf, type = "response") %>% as.vector,
-           incd = (prev * pop_den) %>% as.vector)
+    mutate(prev = predict(gam_mod, grid_newdf, type = "response") %>% as.vector) %>%
+    mutate(incd = (p2i_0_to_5(prev) * pop_den) %>% as.vector)
   
   return(grid_newdf)
 }
@@ -68,11 +76,6 @@ get_domain <- function(x){
   out <- ifelse(is.na(tmp), 0.0001, tmp)
   out <- ifelse(out == 0, 0.0001, out)
   return(out)
-}
-
-p2i_0_to_5 <- function(x) {
-  # Prev to Incidence per person-year
-  return(2.38*x + 3.92*x^2 - 9.30*x^3 + 5.57*x^4 - 0.53*x^5)
 }
 
 #### UI
@@ -181,7 +184,7 @@ server <- function(input, output) {
  output$prev_map <- renderLeaflet({
   # Graphics
   prev_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(0, 1))
-  incd_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(0, 300))
+  incd_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(-0.1, 800))
   icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
                         markerColor = icon_color(vals$hf_data$Type))
   
@@ -197,30 +200,60 @@ server <- function(input, output) {
                       lng = vals$hf_data$Longitude,
                       lat = vals$hf_data$Latitude,
                       popup = vals$hf_data$Name,
-                      icon = icons)
+                      icon = icons) %>%
+    mapview::addMouseCoordinates()
+  
+  ras <- vals$grid[,c("x", "y", input$metric)] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
+  pal <- paste0(input$metric, "_pal") %>% get
+  if (input$metric == "prev") {
+    val <- 0:4 * 0.25
+    titl <- "Prevalence:"
+    prefix <- "Prevalence"
+  } else {
+    val <- 0:4 * 200
+    titl <- "Incidence (per yr):"
+    prefix <- "Incidence"
+  }
+  
+  prev_map <- prev_map %>%
+    addRasterImage(x = ras,
+                   colors = pal,
+                   opacity = 0.5,
+                   layerId = " ") %>%
+    addLegend(pal = pal, values = val,
+              title = titl) %>%
+    addImageQuery(x = ras, 
+                  type = "mousemove", 
+                  layerId = " ",
+                  digits = 3,
+                  prefix = prefix,
+                  position = "bottomright")
   
   # Prevalence or Incidence?
-  if (input$metric == "prev") {
-    ras <- vals$grid[,c("x", "y", "prev")] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
-    prev_map <- prev_map %>%
-      addRasterImage(x = ras,
-                     colors = prev_pal,
-                     opacity = 0.5) %>%
-      addLegend(pal = prev_pal, values = 0:4 * 0.25,
-                title = "Prevalence:",
-                group = "Prevalence legend") %>%
-      mapview::addMouseCoordinates()
-  } else {
-    ras <- vals$grid[,c("x", "y", "incd")] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
-    prev_map <- prev_map %>%
-      addRasterImage(x = ras,
-                     colors = incd_pal,
-                     opacity = 0.5) %>%
-      addLegend(pal = incd_pal, values = 0:6 * 50,
-                title = "Incidence (per yr):",
-                group = "Incidence legend") %>%
-      mapview::addMouseCoordinates()
-  }
+  # if (input$metric == "prev") {
+  #   
+  #     
+  # } 
+  # 
+  # if (input$metric == "incd") {
+  #   ras <- vals$grid[,c("x", "y", "incd")] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
+  #   
+  #   prev_map <- prev_map %>%
+  #     addRasterImage(x = ras,
+  #                    colors = incd_pal,
+  #                    opacity = 0.5,
+  #                    layerId = "Incidence") %>%
+  #     addImageQuery(x = ras, 
+  #                   type = "mousemove", 
+  #                   layerId = "Incidence",
+  #                   digits = 0,
+  #                   prefix = "",
+  #                   position = "bottomright") %>%
+  #     addLegend(pal = incd_pal, values = 0:4 * 200,
+  #               title = "Incidence (per yr):",
+  #               group = "Incidence legend")
+  #   
+  # }
   
     # addLayersControl(
     #   baseGroups = c("Prevalence", "Cases", "Diff. Prev", "Diff. Cases"),
@@ -270,8 +303,8 @@ server <- function(input, output) {
    tmp$hf_data <- tmp$hf_data %>% 
      add_case(
        Name = "Added Facility",
-       Latitude = round(lat, 3), 
-       Longitude = round(lon, 3),
+       Latitude = round(lat, 5), 
+       Longitude = round(lon, 5),
        Type = "User Defined")
    
    icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
