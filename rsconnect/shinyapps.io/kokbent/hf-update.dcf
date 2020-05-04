@@ -1,0 +1,12 @@
+name: hf-update
+title: hf-update
+username:
+account: kokbent
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 2235884
+bundleId: 3099042
+url: https://kokbent.shinyapps.io/hf-update/
+when: 1588555153.3007
+asMultiple: FALSE
+asStatic: FALSE
