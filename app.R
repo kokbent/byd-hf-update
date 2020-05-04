@@ -137,15 +137,10 @@ body <- dashboardBody(
                radioButtons("opt-metric", "For children under 5 years old",
                             c("Prevalence" = "prev", "Incidence" = "incd"), inline = T),
                sliderInput("opt-nhf", "Number of health facilities to be added",
-                           min = 1, max = 7, value = 1, step = 1)
-               )
-           # box(width = NULL, status = "warning",
-           #     title = "Reset",
-           #     p(class = "text-muted",
-           #       "Reload app to remove added health facilities."
-           #     ),
-           #     actionButton("reset", "Reset Now")
-           # )
+                           min = 1, max = 7, value = 1, step = 1),
+               actionButton("optim", "Optimize")
+              )
+
     )
   )
 )
@@ -159,6 +154,10 @@ ui <- dashboardPage(
 
 #### Server logics
 server <- function(input, output) {
+  ## Two sets of reactive values container
+  # tmp holds all the newly added hfs that are not fitted yet
+  # vals holds only the hfs that are already fitted
+  # When we pass tmp to vals, refitting begins
   tmp <- reactiveValues()
   tmp$hf_data <- hf_org
   tmp$grid <- grid_df
@@ -167,8 +166,10 @@ server <- function(input, output) {
   vals$hf_data <- hf_org
   vals$grid <- grid_df
   
+  ## Output: Data Table
   output$hf_table=renderDataTable({vals$hf_data})
   
+  ## Output: Coordinates of click (Need revision)
   output$new_hf_text <- renderUI({
     
     lat <- unlist(input$prev_map_click$lat)
@@ -180,162 +181,137 @@ server <- function(input, output) {
 
     new_loc
   })
-
- output$prev_map <- renderLeaflet({
-  # Graphics
-  prev_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(0, 1))
-  incd_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(-0.1, 800))
-  icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
-                        markerColor = icon_color(vals$hf_data$Type))
   
-  # Base map
-  prev_map <- leaflet() %>%
-    addTiles() %>%
-    addPolygons(data = outline,
-                color = "black",
-                weight = 2,
-                opacity = 1,
-                fillOpacity = 0) %>%
-    addAwesomeMarkers(data = vals$hf_data,
-                      lng = vals$hf_data$Longitude,
-                      lat = vals$hf_data$Latitude,
-                      popup = vals$hf_data$Name,
-                      icon = icons) %>%
-    mapview::addMouseCoordinates()
-  
-  ras <- vals$grid[,c("x", "y", input$metric)] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
-  pal <- paste0(input$metric, "_pal") %>% get
-  if (input$metric == "prev") {
-    val <- 0:4 * 0.25
-    titl <- "Prevalence:"
-    prefix <- "Prevalence"
-  } else {
-    val <- 0:4 * 200
-    titl <- "Incidence (per yr):"
-    prefix <- "Incidence"
-  }
-  
-  prev_map <- prev_map %>%
-    addRasterImage(x = ras,
-                   colors = pal,
-                   opacity = 0.5,
-                   layerId = " ") %>%
-    addLegend(pal = pal, values = val,
-              title = titl) %>%
-    addImageQuery(x = ras, 
-                  type = "mousemove", 
-                  layerId = " ",
-                  digits = 3,
-                  prefix = prefix,
-                  position = "bottomright")
-  
-  # Prevalence or Incidence?
-  # if (input$metric == "prev") {
-  #   
-  #     
-  # } 
-  # 
-  # if (input$metric == "incd") {
-  #   ras <- vals$grid[,c("x", "y", "incd")] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
-  #   
-  #   prev_map <- prev_map %>%
-  #     addRasterImage(x = ras,
-  #                    colors = incd_pal,
-  #                    opacity = 0.5,
-  #                    layerId = "Incidence") %>%
-  #     addImageQuery(x = ras, 
-  #                   type = "mousemove", 
-  #                   layerId = "Incidence",
-  #                   digits = 0,
-  #                   prefix = "",
-  #                   position = "bottomright") %>%
-  #     addLegend(pal = incd_pal, values = 0:4 * 200,
-  #               title = "Incidence (per yr):",
-  #               group = "Incidence legend")
-  #   
-  # }
-  
-    # addLayersControl(
-    #   baseGroups = c("Prevalence", "Cases", "Diff. Prev", "Diff. Cases"),
-    #   overlayGroups = c("Prevalence legend", "Cases legend", "Diff. Prev legend", "Diff. Cases legend"),
-    #   position = "bottomleft",
-    #   options = layersControlOptions(collapsed = F)
-    # )
-  prev_map
+  ## Output: Leaflet
+  output$prev_map <- renderLeaflet({
+    # Graphics
+    prev_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(0, 1))
+    incd_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(-0.1, 800))
+    icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
+                          markerColor = icon_color(vals$hf_data$Type))
+    
+    # Base map
+    prev_map <- leaflet() %>%
+      addTiles() %>%
+      addPolygons(data = outline,
+                  color = "black",
+                  weight = 2,
+                  opacity = 1,
+                  fillOpacity = 0) %>%
+      addAwesomeMarkers(data = vals$hf_data,
+                        lng = vals$hf_data$Longitude,
+                        lat = vals$hf_data$Latitude,
+                        popup = vals$hf_data$Name,
+                        icon = icons) %>%
+      mapview::addMouseCoordinates()
+    
+    # Choosing layer to display: Prevalence or Incidence
+    ras <- vals$grid[,c("x", "y", input$metric)] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
+    pal <- paste0(input$metric, "_pal") %>% get
+    if (input$metric == "prev") {
+      val <- 0:4 * 0.25
+      titl <- "Prevalence:"
+      prefix <- "Prevalence"
+    } else {
+      val <- 0:4 * 200
+      titl <- "Incidence (per yr):"
+      prefix <- "Incidence"
+    }
+    
+    prev_map <- prev_map %>%
+      addRasterImage(x = ras,
+                     colors = pal,
+                     opacity = 0.5,
+                     layerId = " ") %>%
+      addLegend(pal = pal, values = val,
+                title = titl) %>%
+      addImageQuery(x = ras, 
+                    type = "mousemove", 
+                    layerId = " ",
+                    digits = 3,
+                    prefix = prefix,
+                    position = "bottomright")
+    
+    prev_map
   })
- 
- output$prev_overall <- renderInfoBox({
-   infoBox(
-     "Mean prevalence per pixel",
-     value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
-     subtitle = ifelse(nrow(vals$hf_data) == nrow(hf_org), "",
-                       paste0(round(mean(vals$grid$prev) - prev_org, 3) * 100, 
-                              "% from initial map")),
-     icon = icon("heart"),
-     color = "purple"
-   )
- })
- 
- output$incd_overall <- renderInfoBox({
-   infoBox(
-     "Total incidence per year",
-     value = round(sum(vals$grid$incd), 1),
-     subtitle = ifelse(nrow(vals$hf_data) == nrow(hf_org), "",
-                       paste0(round(sum(vals$grid$incd) - incd_org, 1), 
-                              " from initial map")),
-     icon = icon("ambulance"),
-     color = "red"
-   )
- })
- 
- observeEvent(input$refit, {
-   lat <- unlist(input$prev_map_shape_click$lat)
-   lon <- unlist(input$prev_map_shape_click$lng)
-   
-   vals$hf_data <- tmp$hf_data
-   vals$grid <- update_prediction(vals$hf_data)
- })
- 
- observeEvent(input$add_coord, {
-   lat <- unlist(input$prev_map_click$lat)
-   lon <- unlist(input$prev_map_click$lng)
-   
-   tmp$hf_data <- tmp$hf_data %>% 
-     add_case(
-       Name = "Added Facility",
-       Latitude = round(lat, 5), 
-       Longitude = round(lon, 5),
-       Type = "User Defined")
-   
-   icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
-                         markerColor = icon_color(tmp$hf_data$Type))
-   
-   proxy <- leafletProxy("prev_map")
-   proxy %>% clearMarkers() %>%
-     addAwesomeMarkers(data = tmp$hf_data,
-                       lng = tmp$hf_data$Longitude,
-                       lat = tmp$hf_data$Latitude,
-                       popup = tmp$hf_data$Name, 
-                       icon = icons)
- })
- 
- 
- observeEvent(input$prev_map_click, {
-   click <- input$prev_map_click
-   
-   proxy <- leafletProxy("prev_map")
-   proxy %>% 
-     clearGroup("new_point") %>%
-     addCircles(click$lng, click$lat, radius=10, color="red", group = "new_point")
-   
- })
- 
- observeEvent(input$reset, {
-   vals$hf_data <- hf_org
-   vals$grid <- grid_df
-   tmp$hf_data <- hf_org
-   tmp$grid <- grid_df
- })  
+  
+  ## Output: Prevalence info box
+  output$prev_overall <- renderInfoBox({
+    infoBox(
+      "Mean prevalence per pixel",
+      value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
+      subtitle = ifelse(nrow(vals$hf_data) == nrow(hf_org), "",
+                        paste0(round(mean(vals$grid$prev) - prev_org, 3) * 100, 
+                               "% from initial map")),
+      icon = icon("heart"),
+      color = "purple"
+    )
+  })
+  
+  ## Output: Incidence info box
+  output$incd_overall <- renderInfoBox({
+    infoBox(
+      "Total incidence per year",
+      value = round(sum(vals$grid$incd), 1),
+      subtitle = ifelse(nrow(vals$hf_data) == nrow(hf_org), "",
+                        paste0(round(sum(vals$grid$incd) - incd_org, 1), 
+                               " from initial map")),
+      icon = icon("ambulance"),
+      color = "red"
+    )
+  })
+  
+  ## Button logics: Refit
+  observeEvent(input$refit, {
+    lat <- unlist(input$prev_map_shape_click$lat)
+    lon <- unlist(input$prev_map_shape_click$lng)
+    
+    vals$hf_data <- tmp$hf_data
+    vals$grid <- update_prediction(vals$hf_data)
+  })
+  
+  ## Button logics: Add Facility
+  observeEvent(input$add_coord, {
+    lat <- unlist(input$prev_map_click$lat)
+    lon <- unlist(input$prev_map_click$lng)
+    
+    tmp$hf_data <- tmp$hf_data %>% 
+      add_case(
+        Name = "Added Facility",
+        Latitude = round(lat, 5), 
+        Longitude = round(lon, 5),
+        Type = "User Defined")
+    
+    icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
+                          markerColor = icon_color(tmp$hf_data$Type))
+    
+    proxy <- leafletProxy("prev_map")
+    proxy %>% clearMarkers() %>%
+      addAwesomeMarkers(data = tmp$hf_data,
+                        lng = tmp$hf_data$Longitude,
+                        lat = tmp$hf_data$Latitude,
+                        popup = tmp$hf_data$Name, 
+                        icon = icons)
+  })
+  
+  ## Button logics: Reset
+  observeEvent(input$reset, {
+    vals$hf_data <- hf_org
+    vals$grid <- grid_df
+    tmp$hf_data <- hf_org
+    tmp$grid <- grid_df
+  })
+  
+  ## Leaflet map click logics
+  observeEvent(input$prev_map_click, {
+    click <- input$prev_map_click
+    
+    proxy <- leafletProxy("prev_map")
+    proxy %>% 
+      clearGroup("new_point") %>%
+      addCircles(click$lng, click$lat, radius=10, color="red", group = "new_point")
+    
+  })
 }
 
 
