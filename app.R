@@ -11,7 +11,7 @@ library(mgcv)
 library(splines)
 library(DT)
 library(gdistance)
-library(mapview)
+library(leafem)
 library(dplyr)
 library(readr)
 library(ggplot2)
@@ -34,8 +34,9 @@ grid_df <- grid_df %>%
   mutate(prev = predict(gam_mod, grid_df, type = "response") %>% as.vector) %>%
   mutate(incd = (p2i_0_to_5(prev) * pop_den) %>% as.vector)
          
-prev_org <- mean(grid_df$prev)
+prev_org <- sum(grid_df$prev * grid_df$pop_den) * 100 / sum(grid_df$pop_den)
 incd_org <- sum(grid_df$incd)
+lid <- 1
 
 #### Functions
 update_prediction <- function(hfs) {
@@ -122,7 +123,7 @@ body <- dashboardBody(
                ),
                uiOutput("new_hf_text"),
                actionButton("add_coord", "Add Facility"),
-               actionButton("refit", "Re-fit Model"),
+               actionButton("refit", "Update Predictions"),
                actionButton("reset", "Reset Now")
            ),
            
@@ -202,8 +203,8 @@ server <- function(input, output) {
                         lng = vals$hf_data$Longitude,
                         lat = vals$hf_data$Latitude,
                         popup = vals$hf_data$Name,
-                        icon = icons) %>%
-      mapview::addMouseCoordinates()
+                        icon = icons)
+      # mapview::addMouseCoordinates()
     
     # Choosing layer to display: Prevalence or Incidence
     ras <- vals$grid[,c("x", "y", input$metric)] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
@@ -218,31 +219,36 @@ server <- function(input, output) {
       prefix <- "Incidence"
     }
     
+    lid <<- lid+1
+    layerId <- paste0("l", lid)
+
     prev_map <- prev_map %>%
       addRasterImage(x = ras,
                      colors = pal,
                      opacity = 0.5,
-                     layerId = " ") %>%
+                     layerId = layerId,
+                     group = layerId) %>%
       addLegend(pal = pal, values = val,
                 title = titl) %>%
-      addImageQuery(x = ras, 
-                    type = "mousemove", 
-                    layerId = " ",
+      addImageQuery(x = ras,
+                    type = "mousemove",
                     digits = 3,
                     prefix = prefix,
-                    position = "bottomright")
+                    position = "bottomright",
+                    layerId = layerId)
     
     prev_map
   })
   
   ## Output: Prevalence info box
   output$prev_overall <- renderInfoBox({
+    prev_upd <- sum(vals$grid$prev * vals$grid$pop_den) * 100 / sum(vals$grid$pop_den)
     infoBox(
-      "Mean prevalence per pixel",
-      value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
+      "Mean weighted prevalence per pixel",
+      # value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
+      value = round(prev_upd, 1) %>% paste0("%"),
       subtitle = ifelse(nrow(vals$hf_data) == nrow(hf_org), "",
-                        paste0(round(mean(vals$grid$prev) - prev_org, 3) * 100, 
-                               "% from initial map")),
+                        paste0(round(prev_upd - prev_org, 1), "% from initial map")),
       icon = icon("heart"),
       color = "purple"
     )
