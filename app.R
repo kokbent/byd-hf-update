@@ -93,9 +93,9 @@ body <- dashboardBody(
            
            box(width = NULL, status = "warning",
                title = "Choose metric to display",
-               radioButtons("metric", "For children under 5 years old",
-                            c("Prevalence (0 to 1)" = "prev",
-                              "Incidence (Number of cases per year)" = "incd"))
+               radioButtons("metric", "",
+                            c("Prevalence (0 to 1) for children under 5 years old" = "prev",
+                              "Incidence (Number of cases per year) for all ages" = "incd"))
            ),
            
            infoBoxOutput("prev_overall", width = NULL),
@@ -130,8 +130,9 @@ body <- dashboardBody(
                  display the optimal locations that would reduce the chosen metric as much
                  as possible."
                ),
-               radioButtons("opt_metric", "For children under 5 years old",
-                            c("Prevalence" = "w_prev", "Incidence" = "incd"), inline = T),
+               radioButtons("opt_metric", "",
+                            c("Weighted prevalence of children under 5" = "w_prev", 
+                              "Incidence of all ages" = "incd"), inline = F),
                sliderInput("opt_nhf", "Number of health facilities to be added",
                            min = 1, max = 5, value = 1, step = 1),
                actionButton("optim", "Optimize")
@@ -180,8 +181,10 @@ server <- function(input, output) {
   ## Output: Leaflet
   output$prev_map <- renderLeaflet({
     # Graphics
-    prev_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(0, 1))
-    incd_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(-0.1, 3000))
+    prev_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 1),
+                             reverse = T)
+    incd_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(-0.1, 3000),
+                             reverse = T)
     icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
                           markerColor = icon_color(vals$hf_data$Type))
 
@@ -237,7 +240,7 @@ server <- function(input, output) {
   ## Output: Prevalence info box
   output$prev_overall <- renderInfoBox({
     prev_upd <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
-    print(prev_upd)
+    # print(prev_upd)
     infoBox(
       "Mean weighted prevalence per pixel",
       # value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
