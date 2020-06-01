@@ -16,25 +16,24 @@ library(dplyr)
 library(readr)
 library(ggplot2)
 library(tibble)
+source("p2i_functions.R")
 
 #### Import
 load('datafiles/gam_mod_v2.rda')
 T.GC <- readRDS("datafiles/T_GC.rds")
 hf_org <- read_csv("datafiles/hf-locations.csv") 
 outline <- shapefile("shp/Study_Area_NEW.shp")
-grid_df <- read_csv("datafiles/grid_data.csv")
+grid_df <- read_csv("datafiles/grid_data.csv") %>%
+  rename(lng = x, lat = y)
+opt_xy <- read_csv("datafiles/opt_xy.csv")
 
 #### Initialize
-p2i_0_to_5 <- function(x) {
-  # Prev to Incidence per person-year
-  return(2.38*x + 3.92*x^2 - 9.30*x^3 + 5.57*x^4 - 0.53*x^5)
-}
-
 grid_df <- grid_df %>% 
-  mutate(prev = predict(gam_mod, grid_df, type = "response") %>% as.vector) %>%
-  mutate(incd = (p2i_0_to_5(prev) * pop_den) %>% as.vector)
+  mutate(prev = predict(gam_mod, grid_df, type = "response") %>% 
+           as.vector) %>%
+  mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
          
-prev_org <- sum(grid_df$prev * grid_df$pop_den) * 100 / sum(grid_df$pop_den)
+prev_org <- sum(grid_df$prev * grid_df$pop_u5) * 100 / sum(grid_df$pop_u5)
 incd_org <- sum(grid_df$incd)
 lid <- 1
 
@@ -53,13 +52,14 @@ update_prediction <- function(hfs) {
   temp.raster <- accCost(T.GC, xy.matrix)
   
   grid_newdf <- grid_df
-  grid_xy <- grid_newdf[,c("x", "y")] %>%
+  grid_xy <- grid_newdf[,c("lng", "lat")] %>%
     as.matrix()
-  grid_newdf$time_hf <- raster::extract(temp.raster, grid_xy)
+  grid_newdf$time_allhf <- raster::extract(temp.raster, grid_xy)
   
   grid_newdf <- grid_newdf %>% 
-    mutate(prev = predict(gam_mod, grid_newdf, type = "response") %>% as.vector) %>%
-    mutate(incd = (p2i_0_to_5(prev) * pop_den) %>% as.vector)
+    mutate(prev = predict(gam_mod, grid_newdf, type = "response") %>% 
+             as.vector) %>%
+    mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
   
   return(grid_newdf)
 }
@@ -68,16 +68,11 @@ icon_color <- function(type) {
   case_when(
     type == "CHPS" ~ "red", 
     type == "Health Center" ~ "blue", 
-    type == "User Defined" ~ "cadetblue"
+    type == "User Defined" ~ "cadetblue",
+    type == "Optimization" ~ "purple"
   )
 }
 
-get_domain <- function(x){
-  tmp <- max(abs(x))
-  out <- ifelse(is.na(tmp), 0.0001, tmp)
-  out <- ifelse(out == 0, 0.0001, out)
-  return(out)
-}
 
 #### UI
 header <- dashboardHeader(
@@ -135,10 +130,10 @@ body <- dashboardBody(
                  display the optimal locations that would reduce the chosen metric as much
                  as possible."
                ),
-               radioButtons("opt-metric", "For children under 5 years old",
-                            c("Prevalence" = "prev", "Incidence" = "incd"), inline = T),
-               sliderInput("opt-nhf", "Number of health facilities to be added",
-                           min = 1, max = 7, value = 1, step = 1),
+               radioButtons("opt_metric", "For children under 5 years old",
+                            c("Prevalence" = "w_prev", "Incidence" = "incd"), inline = T),
+               sliderInput("opt_nhf", "Number of health facilities to be added",
+                           min = 1, max = 5, value = 1, step = 1),
                actionButton("optim", "Optimize")
               )
 
@@ -161,7 +156,6 @@ server <- function(input, output) {
   # When we pass tmp to vals, refitting begins
   tmp <- reactiveValues()
   tmp$hf_data <- hf_org
-  tmp$grid <- grid_df
   
   vals <- reactiveValues()
   vals$hf_data <- hf_org
@@ -187,10 +181,10 @@ server <- function(input, output) {
   output$prev_map <- renderLeaflet({
     # Graphics
     prev_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(0, 1))
-    incd_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(-0.1, 800))
+    incd_pal <- colorNumeric(palette = "inferno", na.color = "#00000000", domain = c(-0.1, 3000))
     icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
                           markerColor = icon_color(vals$hf_data$Type))
-    
+
     # Base map
     prev_map <- leaflet() %>%
       addTiles() %>%
@@ -207,14 +201,14 @@ server <- function(input, output) {
       # mapview::addMouseCoordinates()
     
     # Choosing layer to display: Prevalence or Incidence
-    ras <- vals$grid[,c("x", "y", input$metric)] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
+    ras <- vals$grid[,c("lng", "lat", input$metric)] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
     pal <- paste0(input$metric, "_pal") %>% get
     if (input$metric == "prev") {
       val <- 0:4 * 0.25
       titl <- "Prevalence:"
       prefix <- "Prevalence"
     } else {
-      val <- 0:4 * 200
+      val <- 0:6 * 500
       titl <- "Incidence (per yr):"
       prefix <- "Incidence"
     }
@@ -242,7 +236,8 @@ server <- function(input, output) {
   
   ## Output: Prevalence info box
   output$prev_overall <- renderInfoBox({
-    prev_upd <- sum(vals$grid$prev * vals$grid$pop_den) * 100 / sum(vals$grid$pop_den)
+    prev_upd <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
+    print(prev_upd)
     infoBox(
       "Mean weighted prevalence per pixel",
       # value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
@@ -269,9 +264,6 @@ server <- function(input, output) {
   
   ## Button logics: Refit
   observeEvent(input$refit, {
-    lat <- unlist(input$prev_map_shape_click$lat)
-    lon <- unlist(input$prev_map_shape_click$lng)
-    
     vals$hf_data <- tmp$hf_data
     vals$grid <- update_prediction(vals$hf_data)
   })
@@ -305,7 +297,6 @@ server <- function(input, output) {
     vals$hf_data <- hf_org
     vals$grid <- grid_df
     tmp$hf_data <- hf_org
-    tmp$grid <- grid_df
   })
   
   ## Leaflet map click logics
@@ -317,6 +308,22 @@ server <- function(input, output) {
       clearGroup("new_point") %>%
       addCircles(click$lng, click$lat, radius=10, color="red", group = "new_point")
     
+  })
+  
+  ## Optimization
+  observeEvent(input$optim, {
+    opt <- opt_xy %>%
+      filter(nhf == input$opt_nhf, metric == input$opt_metric) %>%
+      mutate(Name = "Added Facility",
+             Latitude = round(lat, 5),
+             Longitude = round(lng, 5),
+             Type = "Optimization") %>%
+      select(-nhf, -metric, -lat, -lng)
+    hf_new <- bind_rows(hf_org, opt)
+    
+    tmp$hf_data <- hf_new
+    vals$hf_data <- hf_new
+    vals$grid <- update_prediction(vals$hf_data)
   })
 }
 
