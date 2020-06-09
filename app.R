@@ -19,18 +19,23 @@ library(tibble)
 source("p2i_functions.R")
 
 #### Import
-load('datafiles/gam_mod_v2.rda')
+load('datafiles/gam_mod_v2-1.rda')
+load('datafiles/gam_mod_v2-2.rda')
 T.GC <- readRDS("datafiles/T_GC.rds")
 hf_org <- read_csv("datafiles/hf-locations.csv") 
 outline <- shapefile("shp/Study_Area_NEW.shp")
 grid_df <- read_csv("datafiles/grid_data.csv") %>%
-  rename(lng = x, lat = y)
+  rename(lng = x, lat = y) %>%
+  mutate(year = 2012)
 opt_xy <- read_csv("datafiles/opt_xy.csv")
 
 #### Initialize
 grid_df <- grid_df %>% 
-  mutate(prev = predict(gam_mod, grid_df, type = "response") %>% 
-           as.vector) %>%
+  mutate(prev1 = predict(gam_mod1, grid_df, type = "response") %>% 
+           as.vector,
+         prev2 = predict(gam_mod2, grid_df, type = "response") %>% 
+           as.vector,
+         prev = (prev1 + prev2)/2) %>%
   mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
          
 prev_org <- sum(grid_df$prev * grid_df$pop_u5) * 100 / sum(grid_df$pop_u5)
@@ -43,12 +48,11 @@ update_prediction <- function(hfs) {
   points <- hfs %>% 
     dplyr::select(x = Longitude, y = Latitude)
   
-  # Convert the points into a matrix
   xy.matrix <- points %>%
     as.data.frame() %>%
     as.matrix()
   
-  # Run the accumulated cost algorithm to make the final output map. This can be quite slow (potentially hours).
+  ## Update accumulated cost
   temp.raster <- accCost(T.GC, xy.matrix)
   
   grid_newdf <- grid_df
@@ -56,9 +60,14 @@ update_prediction <- function(hfs) {
     as.matrix()
   grid_newdf$time_allhf <- raster::extract(temp.raster, grid_xy)
   
+  grid_newdf$pred1 <- predict(gam_mod1, grid_newdf, type = "response") %>% as.vector
+  grid_newdf$pred1 <- predict(gam_mod2, grid_newdf, type = "response") %>% as.vector
   grid_newdf <- grid_newdf %>% 
-    mutate(prev = predict(gam_mod, grid_newdf, type = "response") %>% 
-             as.vector) %>%
+    mutate(prev1 = predict(gam_mod1, grid_newdf, type = "response") %>% 
+             as.vector,
+           prev2 = predict(gam_mod2, grid_newdf, type = "response") %>% 
+             as.vector,
+           prev = (prev1 + prev2)/2) %>%
     mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
   
   return(grid_newdf)
