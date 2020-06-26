@@ -3,22 +3,29 @@ update_prediction <- function(hfs) {
   points <- hfs %>% 
     dplyr::select(x = Longitude, y = Latitude)
   
-  # Convert the points into a matrix
   xy.matrix <- points %>%
     as.data.frame() %>%
     as.matrix()
   
-  # Run the accumulated cost algorithm to make the final output map. This can be quite slow (potentially hours).
+  ## Update accumulated cost
   temp.raster <- accCost(T.GC, xy.matrix)
   
   grid_newdf <- grid_df
-  grid_xy <- grid_newdf[,c("x", "y")] %>%
+  grid_xy <- grid_newdf[,c("lng", "lat")] %>%
     as.matrix()
-  grid_newdf$time_hf <- raster::extract(temp.raster, grid_xy)
+  grid_newdf$time_allhf <- raster::extract(temp.raster, grid_xy)
   
+  grid_newdf$pred1 <- predict(gam_mod1, grid_newdf, type = "response") %>% as.vector
+  grid_newdf$pred1 <- predict(gam_mod2, grid_newdf, type = "response") %>% as.vector
   grid_newdf <- grid_newdf %>% 
-    mutate(prev = predict(gam_mod, grid_newdf, type = "response") %>% as.vector,
-           incd = (prev * pop_den) %>% as.vector)
+    mutate(prev1 = predict(gam_mod1, grid_newdf, type = "response") %>% 
+             as.vector,
+           prev2 = predict(gam_mod2, grid_newdf, type = "response") %>% 
+             as.vector,
+           prev = (prev1 + prev2)/2) %>%
+    mutate(incd1 = sapply(prev1, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all,
+           incd2 = sapply(prev2, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all,
+           incd = (incd1 + incd2)/2)
   
   return(grid_newdf)
 }
@@ -27,18 +34,9 @@ icon_color <- function(type) {
   case_when(
     type == "CHPS" ~ "red", 
     type == "Health Center" ~ "blue", 
-    type == "User Defined" ~ "cadetblue"
+    type == "User Defined" ~ "cadetblue",
+    type == "Optimization" ~ "purple"
   )
 }
 
-get_domain <- function(x){
-  tmp <- max(abs(x))
-  out <- ifelse(is.na(tmp), 0.0001, tmp)
-  out <- ifelse(out == 0, 0.0001, out)
-  return(out)
-}
-
-p2i_0_to_5 <- function(x) {
-  # Prev to Incidence per person-year
-  return(2.38*x + 3.92*x^2 - 9.30*x^3 + 5.57*x^4 - 0.53*x^5)
-}
+reset_hf_scenario

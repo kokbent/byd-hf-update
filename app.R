@@ -22,12 +22,13 @@ source("p2i_functions.R")
 load('datafiles/gam_mod_v2-1.rda')
 load('datafiles/gam_mod_v2-2.rda')
 T.GC <- readRDS("datafiles/T_GC.rds")
-hf_org <- read_csv("datafiles/hf-locations.csv") 
+hf_org <- read_csv("datafiles/hf-locations.csv")
 outline <- shapefile("shp/Study_Area_NEW.shp")
 grid_df <- read_csv("datafiles/grid_data.csv") %>%
   rename(lng = x, lat = y) %>%
   mutate(year = 2012)
 opt_xy <- read_csv("datafiles/opt_xy.csv")
+opt_xy_nochps <- read_csv("datafiles/opt_xy_nochps.csv")
 
 #### Initialize
 grid_df <- grid_df %>% 
@@ -101,8 +102,11 @@ body <- dashboardBody(
     column(width = 3,
            
            box(width = NULL, status = "warning",
-               title = "Choose metric to display",
-               radioButtons("metric", "",
+               title = "Scenario and metric",
+               radioButtons("scenario", "Choose a scenario :",
+                            c("With existing CHPS in place" = "wchps",
+                              "Without existing CHPS" = "wochps")),
+               radioButtons("metric", "Choose a metric to display :",
                             c("Prevalence (0 to 1) for children under 5 years old" = "prev",
                               "Incidence (Number of cases per year) for all ages" = "incd"))
            ),
@@ -160,6 +164,16 @@ ui <- dashboardPage(
 
 #### Server logics
 server <- function(input, output) {
+  
+  # hf_org <- reactive(
+  #   if (input$scenario == "wchps") {
+  #     read_csv("datafiles/hf-locations.csv")
+  #   } else {
+  #     read_csv("datafiles/hf-locations.csv") %>%
+  #       filter(Type != "CHPS")
+  #   }
+  # )
+  
   ## Two sets of reactive values container
   # tmp holds all the newly added hfs that are not fitted yet
   # vals holds only the hfs that are already fitted
@@ -170,9 +184,13 @@ server <- function(input, output) {
   vals <- reactiveValues()
   vals$hf_data <- hf_org
   vals$grid <- grid_df
+  vals$prev_org <- prev_org
+  vals$incd_org <- incd_org
+  
   
   ## Output: Data Table
   output$hf_table=renderDataTable({vals$hf_data})
+  
   
   ## Output: Coordinates of click (Need revision)
   output$new_hf_text <- renderUI({
@@ -254,8 +272,8 @@ server <- function(input, output) {
       "Mean weighted prevalence per pixel",
       # value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
       value = round(prev_upd, 1) %>% paste0("%"),
-      subtitle = ifelse(nrow(vals$hf_data) == nrow(hf_org), "",
-                        paste0(round(prev_upd - prev_org, 1), "% from initial map")),
+      subtitle = ifelse(nrow(vals$hf_data) == ifelse(input$scenario == "wchps", 8, 5), "",
+                        paste0(round(prev_upd - vals$prev_org, 1), "% from initial map")),
       icon = icon("heart"),
       color = "purple"
     )
@@ -266,8 +284,8 @@ server <- function(input, output) {
     infoBox(
       "Total incidence per year",
       value = round(sum(vals$grid$incd), 1),
-      subtitle = ifelse(nrow(vals$hf_data) == nrow(hf_org), "",
-                        paste0(round(sum(vals$grid$incd) - incd_org, 1), 
+      subtitle = ifelse(nrow(vals$hf_data) == ifelse(input$scenario == "wchps", 8, 5), "",
+                        paste0(round(sum(vals$grid$incd) - vals$incd_org, 1), 
                                " from initial map")),
       icon = icon("ambulance"),
       color = "red"
@@ -304,11 +322,40 @@ server <- function(input, output) {
                         icon = icons)
   })
   
+  ##
+  observeEvent(input$scenario, {
+    
+    if (input$scenario == "wchps") {
+      vals$hf_data <- hf_org
+      vals$grid <- grid_df
+      vals$prev_org <- prev_org
+      vals$incd_org <- incd_org
+      tmp$hf_data <- hf_org
+    } else {
+      vals$hf_data <- hf_org %>% 
+        filter(Type != "CHPS")
+      vals$grid <- update_prediction(vals$hf_data)
+      tmp$hf_data <- hf_org %>%
+        filter(Type != "CHPS")
+      vals$prev_org <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
+      vals$incd_org <- sum(vals$grid$incd)
+    }
+  })
+  
   ## Button logics: Reset
   observeEvent(input$reset, {
-    vals$hf_data <- hf_org
-    vals$grid <- grid_df
-    tmp$hf_data <- hf_org
+    
+    if (input$scenario == "wchps") {
+      vals$hf_data <- hf_org
+      vals$grid <- grid_df
+      tmp$hf_data <- hf_org
+    } else {
+      vals$hf_data <- hf_org %>% 
+        filter(Type != "CHPS")
+      vals$grid <- update_prediction(vals$hf_data)
+      tmp$hf_data <- hf_org %>%
+        filter(Type != "CHPS")
+    }
   })
   
   ## Leaflet map click logics
@@ -324,14 +371,26 @@ server <- function(input, output) {
   
   ## Optimization
   observeEvent(input$optim, {
-    opt <- opt_xy %>%
-      filter(nhf == input$opt_nhf, metric == input$opt_metric) %>%
-      mutate(Name = "Added Facility",
-             Latitude = round(lat, 5),
-             Longitude = round(lng, 5),
-             Type = "Optimization") %>%
-      select(-nhf, -metric, -lat, -lng)
-    hf_new <- bind_rows(hf_org, opt)
+    if (input$scenario == "wchps") {
+      opt <- opt_xy %>%
+        filter(nhf == input$opt_nhf, metric == input$opt_metric) %>%
+        mutate(Name = "Added Facility",
+               Latitude = round(lat, 5),
+               Longitude = round(lng, 5),
+               Type = "Optimization") %>%
+        select(-nhf, -metric, -lat, -lng)
+      hf_new <- bind_rows(hf_org, opt)
+    } else {
+      opt <- opt_xy_nochps %>%
+        filter(nhf == input$opt_nhf, metric == input$opt_metric) %>%
+        mutate(Name = "Added Facility",
+               Latitude = round(lat, 5),
+               Longitude = round(lng, 5),
+               Type = "Optimization") %>%
+        select(-nhf, -metric, -lat, -lng)
+      hf_new <- bind_rows(hf_org %>% filter(Type != "CHPS"), 
+                          opt)
+    }
     
     tmp$hf_data <- hf_new
     vals$hf_data <- hf_new
