@@ -1,4 +1,4 @@
-update_prediction <- function(hfs) {
+update_prediction <- function(hfs, T.GC) {
   
   points <- hfs %>% 
     dplyr::select(x = Longitude, y = Latitude)
@@ -15,17 +15,9 @@ update_prediction <- function(hfs) {
     as.matrix()
   grid_newdf$time_allhf <- raster::extract(temp.raster, grid_xy)
   
-  grid_newdf$pred1 <- predict(gam_mod1, grid_newdf, type = "response") %>% as.vector
-  grid_newdf$pred1 <- predict(gam_mod2, grid_newdf, type = "response") %>% as.vector
   grid_newdf <- grid_newdf %>% 
-    mutate(prev1 = predict(gam_mod1, grid_newdf, type = "response") %>% 
-             as.vector,
-           prev2 = predict(gam_mod2, grid_newdf, type = "response") %>% 
-             as.vector,
-           prev = (prev1 + prev2)/2) %>%
-    mutate(incd1 = sapply(prev1, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all,
-           incd2 = sapply(prev2, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all,
-           incd = (incd1 + incd2)/2)
+    mutate(prev = predict(gam_mod1, grid_newdf, type = "response")) %>%
+    mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
   
   return(grid_newdf)
 }
@@ -39,4 +31,4 @@ icon_color <- function(type) {
   )
 }
 
-reset_hf_scenario
+# reset_hf_scenario
