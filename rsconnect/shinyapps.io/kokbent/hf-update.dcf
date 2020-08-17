@@ -5,8 +5,8 @@ account: kokbent
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 2235884
-bundleId: 3321487
+bundleId: 3332404
 url: https://kokbent.shinyapps.io/hf-update/
-when: 1593213031.13355
+when: 1593491981.96236
 asMultiple: FALSE
 asStatic: FALSE

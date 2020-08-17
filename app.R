@@ -17,10 +17,10 @@ library(readr)
 library(ggplot2)
 library(tibble)
 source("p2i_functions.R")
+source("functions.R", local = T)
 
 #### Import
 load('datafiles/gam_mod_v2-1.rda')
-load('datafiles/gam_mod_v2-2.rda')
 T.GC <- readRDS("datafiles/T_GC.rds")
 hf_org <- read_csv("datafiles/hf-locations.csv")
 outline <- shapefile("shp/Study_Area_NEW.shp")
@@ -32,57 +32,12 @@ opt_xy_nochps <- read_csv("datafiles/opt_xy_nochps.csv")
 
 #### Initialize
 grid_df <- grid_df %>% 
-  mutate(prev1 = predict(gam_mod1, grid_df, type = "response") %>% 
-           as.vector,
-         prev2 = predict(gam_mod2, grid_df, type = "response") %>% 
-           as.vector,
-         prev = (prev1 + prev2)/2) %>%
+  mutate(prev = predict(gam_mod1, grid_df, type = "response")) %>%
   mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
          
 prev_org <- sum(grid_df$prev * grid_df$pop_u5) * 100 / sum(grid_df$pop_u5)
 incd_org <- sum(grid_df$incd)
 lid <- 1
-
-#### Functions
-update_prediction <- function(hfs) {
-  
-  points <- hfs %>% 
-    dplyr::select(x = Longitude, y = Latitude)
-  
-  xy.matrix <- points %>%
-    as.data.frame() %>%
-    as.matrix()
-  
-  ## Update accumulated cost
-  temp.raster <- accCost(T.GC, xy.matrix)
-  
-  grid_newdf <- grid_df
-  grid_xy <- grid_newdf[,c("lng", "lat")] %>%
-    as.matrix()
-  grid_newdf$time_allhf <- raster::extract(temp.raster, grid_xy)
-  
-  grid_newdf$pred1 <- predict(gam_mod1, grid_newdf, type = "response") %>% as.vector
-  grid_newdf$pred1 <- predict(gam_mod2, grid_newdf, type = "response") %>% as.vector
-  grid_newdf <- grid_newdf %>% 
-    mutate(prev1 = predict(gam_mod1, grid_newdf, type = "response") %>% 
-             as.vector,
-           prev2 = predict(gam_mod2, grid_newdf, type = "response") %>% 
-             as.vector,
-           prev = (prev1 + prev2)/2) %>%
-    mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
-  
-  return(grid_newdf)
-}
-
-icon_color <- function(type) {
-  case_when(
-    type == "CHPS" ~ "red", 
-    type == "Health Center" ~ "blue", 
-    type == "User Defined" ~ "cadetblue",
-    type == "Optimization" ~ "purple"
-  )
-}
-
 
 #### UI
 header <- dashboardHeader(
@@ -108,7 +63,8 @@ body <- dashboardBody(
                               "Without existing CHPS" = "wochps")),
                radioButtons("metric", "Choose a metric to display :",
                             c("Prevalence (0 to 1) for children under 5 years old" = "prev",
-                              "Incidence (Number of cases per year) for all ages" = "incd"))
+                              "Incidence (Number of cases per year) for all ages" = "incd",
+                              "Travel time (min)" = "time_allhf"))
            ),
            
            infoBoxOutput("prev_overall", width = NULL),
@@ -136,7 +92,7 @@ body <- dashboardBody(
            ),
            
            box(width = NULL, status = "warning",
-               title = "Optimal locations for new health facilities (Under development)",
+               title = "Optimal locations for new health facilities",
                p(class = "text-muted",
                  "Choose the metric to optimize, and then choose the number of
                  new health facilities to be added. Press \"Optimize\" and the app will
@@ -144,8 +100,10 @@ body <- dashboardBody(
                  as possible."
                ),
                radioButtons("opt_metric", "",
-                            c("Weighted prevalence of children under 5" = "w_prev", 
-                              "Incidence of all ages" = "incd"), inline = F),
+                            c("District-wide prevalence of children under 5" = "w_prev", 
+                              "Incidence of all ages" = "incd",
+                              "Average travel time per person" = "ptme"), 
+                            inline = F),
                sliderInput("opt_nhf", "Number of health facilities to be added",
                            min = 1, max = 5, value = 1, step = 1),
                actionButton("optim", "Optimize")
@@ -212,6 +170,8 @@ server <- function(input, output) {
                              reverse = T)
     incd_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(-0.1, 3000),
                              reverse = T)
+    time_allhf_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 120),
+                             reverse = T)
     icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
                           markerColor = icon_color(vals$hf_data$Type))
 
@@ -237,10 +197,14 @@ server <- function(input, output) {
       val <- 0:4 * 0.25
       titl <- "Prevalence:"
       prefix <- "Prevalence"
-    } else {
+    } else if (input$metric == "incd") {
       val <- 0:6 * 500
       titl <- "Incidence (per yr):"
       prefix <- "Incidence"
+    } else {
+      val <- 0:6 * 20
+      titl <- "Travel time (min):"
+      prefix <- "Travel time"
     }
     
     lid <<- lid+1
@@ -269,7 +233,7 @@ server <- function(input, output) {
     prev_upd <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
     # print(prev_upd)
     infoBox(
-      "Mean weighted prevalence per pixel",
+      "District-wide prevalence per pixel",
       # value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
       value = round(prev_upd, 1) %>% paste0("%"),
       subtitle = ifelse(nrow(vals$hf_data) == ifelse(input$scenario == "wchps", 8, 5), "",
@@ -295,7 +259,7 @@ server <- function(input, output) {
   ## Button logics: Refit
   observeEvent(input$refit, {
     vals$hf_data <- tmp$hf_data
-    vals$grid <- update_prediction(vals$hf_data)
+    vals$grid <- update_prediction(vals$hf_data, T.GC)
   })
   
   ## Button logics: Add Facility
@@ -334,7 +298,7 @@ server <- function(input, output) {
     } else {
       vals$hf_data <- hf_org %>% 
         filter(Type != "CHPS")
-      vals$grid <- update_prediction(vals$hf_data)
+      vals$grid <- update_prediction(vals$hf_data, T.GC)
       tmp$hf_data <- hf_org %>%
         filter(Type != "CHPS")
       vals$prev_org <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
@@ -352,7 +316,7 @@ server <- function(input, output) {
     } else {
       vals$hf_data <- hf_org %>% 
         filter(Type != "CHPS")
-      vals$grid <- update_prediction(vals$hf_data)
+      vals$grid <- update_prediction(vals$hf_data, T.GC)
       tmp$hf_data <- hf_org %>%
         filter(Type != "CHPS")
     }
@@ -394,7 +358,7 @@ server <- function(input, output) {
     
     tmp$hf_data <- hf_new
     vals$hf_data <- hf_new
-    vals$grid <- update_prediction(vals$hf_data)
+    vals$grid <- update_prediction(vals$hf_data, T.GC)
   })
 }
 
