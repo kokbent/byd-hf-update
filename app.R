@@ -34,7 +34,7 @@ opt_xy_nochps <- read_csv("datafiles/opt_xy_nochps.csv")
 grid_df <- grid_df %>% 
   mutate(prev = predict(gam_mod1, grid_df, type = "response")) %>%
   mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
-         
+
 prev_org <- sum(grid_df$prev * grid_df$pop_u5) * 100 / sum(grid_df$pop_u5)
 incd_org <- sum(grid_df$incd)
 lid <- 1
@@ -50,6 +50,16 @@ body <- dashboardBody(
            box(width = NULL, solidHeader = TRUE,
                leafletOutput("prev_map", height = 500)
            ),
+           
+           fluidRow(
+             infoBoxOutput("prev_overall", width = 4),
+             infoBoxOutput("incd_overall", width = 4),
+             infoBoxOutput("ptme_overall", width = 4)
+           ),
+           # box(width = NULL, 
+           #     
+           # ),
+           
            box(width = NULL,
                dataTableOutput("hf_table")
            )
@@ -64,12 +74,13 @@ body <- dashboardBody(
                radioButtons("metric", "Choose a metric to display :",
                             c("Prevalence (0 to 1) for children under 5 years old" = "prev",
                               "Incidence (Number of cases per year) for all ages" = "incd",
-                              "Travel time (min)" = "time_allhf"))
+                              "Travel time (min)" = "time_allhf")),
+               radioButtons("metric_type", "Magnitude or Difference :",
+                            c("Magnitude of the metric" = "magn",
+                              "Difference from the baseline" = "diff"))
            ),
            
-           infoBoxOutput("prev_overall", width = NULL),
            
-           infoBoxOutput("incd_overall", width = NULL),
            
            box(width = NULL, status = "warning",
                title = "Add new health facility",
@@ -85,7 +96,7 @@ body <- dashboardBody(
                  "Press \"Reset Now\" button
                  to remove all proposed facilities and revert to initial map."
                ),
-               uiOutput("new_hf_text"),
+               # uiOutput("new_hf_text"),
                actionButton("add_coord", "Add Facility"),
                actionButton("refit", "Update Predictions"),
                actionButton("reset", "Reset Now")
@@ -142,6 +153,7 @@ server <- function(input, output) {
   vals <- reactiveValues()
   vals$hf_data <- hf_org
   vals$grid <- grid_df
+  vals$grid_org <- grid_df
   vals$prev_org <- prev_org
   vals$incd_org <- incd_org
   
@@ -166,12 +178,7 @@ server <- function(input, output) {
   ## Output: Leaflet
   output$prev_map <- renderLeaflet({
     # Graphics
-    prev_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 1),
-                             reverse = T)
-    incd_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(-0.1, 3000),
-                             reverse = T)
-    time_allhf_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 120),
-                             reverse = T)
+
     icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
                           markerColor = icon_color(vals$hf_data$Type))
 
@@ -190,22 +197,22 @@ server <- function(input, output) {
                         icon = icons)
       # mapview::addMouseCoordinates()
     
-    # Choosing layer to display: Prevalence or Incidence
-    ras <- vals$grid[,c("lng", "lat", input$metric)] %>% rasterFromXYZ(crs = CRS("+init=epsg:4326"))
-    pal <- paste0(input$metric, "_pal") %>% get
-    if (input$metric == "prev") {
-      val <- 0:4 * 0.25
-      titl <- "Prevalence:"
-      prefix <- "Prevalence"
-    } else if (input$metric == "incd") {
-      val <- 0:6 * 500
-      titl <- "Incidence (per yr):"
-      prefix <- "Incidence"
+    # Choosing layer to display: Prevalence, Incidence or Travel time,
+    # and Magnitude or differences
+    if (input$metric_type == "magn") {
+      ras <- vals$grid[,c("lng", "lat", input$metric)] %>% 
+        rasterFromXYZ(crs = CRS("+init=epsg:4326"))
+      pal <- paste0(input$metric, "_pal") %>% get
     } else {
-      val <- 0:6 * 20
-      titl <- "Travel time (min):"
-      prefix <- "Travel time"
+      metric_diff <- vals$grid[, input$metric] - vals$grid_org[, input$metric]
+      metric_diff[abs(metric_diff) < 0.001] <- 0
+      ras <- cbind(vals$grid[,c("lng", "lat")], metric_diff) %>% 
+        rasterFromXYZ(crs = CRS("+init=epsg:4326"))
+      pal <- paste0(input$metric, "_diff_pal") %>% get
     }
+    
+    params <- set_map_params(input$metric, input$metric_type)
+    print(params)
     
     lid <<- lid+1
     layerId <- paste0("l", lid)
@@ -216,12 +223,14 @@ server <- function(input, output) {
                      opacity = 0.5,
                      layerId = layerId,
                      group = layerId) %>%
-      addLegend(pal = pal, values = val,
-                title = titl) %>%
+      addLegend(pal = pal, 
+                values = params$val,
+                bins = params$val,
+                title = params$titl) %>%
       addImageQuery(x = ras,
                     type = "mousemove",
                     digits = 3,
-                    prefix = prefix,
+                    prefix = params$prefix,
                     position = "bottomright",
                     layerId = layerId)
     
@@ -231,10 +240,8 @@ server <- function(input, output) {
   ## Output: Prevalence info box
   output$prev_overall <- renderInfoBox({
     prev_upd <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
-    # print(prev_upd)
     infoBox(
       "District-wide prevalence per pixel",
-      # value = paste0(round(mean(vals$grid$prev), 3) * 100, "%"),
       value = round(prev_upd, 1) %>% paste0("%"),
       subtitle = ifelse(nrow(vals$hf_data) == ifelse(input$scenario == "wchps", 8, 5), "",
                         paste0(round(prev_upd - vals$prev_org, 1), "% from initial map")),
@@ -253,6 +260,20 @@ server <- function(input, output) {
                                " from initial map")),
       icon = icon("ambulance"),
       color = "red"
+    )
+  })
+  
+  ## Output: Travel time info box
+  output$ptme_overall <- renderInfoBox({
+    ptme_upd <- sum(vals$grid$time_allhf * vals$grid$pop_all) / sum(vals$grid$pop_all)
+    ptme_org <- sum(vals$grid_org$time_allhf * vals$grid_org$pop_all) / sum(vals$grid_org$pop_all)
+    infoBox(
+      "Travel time per person",
+      value = paste0(round(ptme_upd, 1), " min"),
+      subtitle = ifelse(nrow(vals$hf_data) == ifelse(input$scenario == "wchps", 8, 5), "",
+                        paste0(round(ptme_upd - ptme_org, 1), " from initial map")),
+      icon = icon("hourglass-half"),
+      color = "yellow"
     )
   })
   
@@ -292,6 +313,7 @@ server <- function(input, output) {
     if (input$scenario == "wchps") {
       vals$hf_data <- hf_org
       vals$grid <- grid_df
+      vals$grid_org <- grid_df
       vals$prev_org <- prev_org
       vals$incd_org <- incd_org
       tmp$hf_data <- hf_org
@@ -299,6 +321,7 @@ server <- function(input, output) {
       vals$hf_data <- hf_org %>% 
         filter(Type != "CHPS")
       vals$grid <- update_prediction(vals$hf_data, T.GC)
+      vals$grid_org <- vals$grid
       tmp$hf_data <- hf_org %>%
         filter(Type != "CHPS")
       vals$prev_org <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)

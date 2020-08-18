@@ -31,4 +31,56 @@ icon_color <- function(type) {
   )
 }
 
-# reset_hf_scenario
+set_map_params <- function (metric, metric_type) {
+  l <- list()
+  
+  if (metric == "prev") {
+    if (metric_type == "magn") {
+      l$val <- 0:5 * 0.2
+      l$titl <- "Prevalence:"
+      l$prefix <- "Prevalence"
+    } else {
+      l$val <- 6:0 * -0.02
+      l$titl <- "Change in prevalence:"
+      l$prefix <- "Change"
+    }
+    
+  } else if (metric == "incd") {
+    if (metric_type == "magn") {
+      l$val <- 0:6 * 500
+      l$titl <- "Incidence (per yr):"
+      l$prefix <- "Incidence"
+    } else {
+      l$val <- 5:0 * -4
+      l$titl <- "Change in incidence:"
+      l$prefix <- "Change"
+    }
+  } else {
+    if (metric_type == "magn") {
+      l$val <- 0:6 * 20
+      l$titl <- "Travel time (min):"
+      l$prefix <- "Travel time"
+    } else {
+      l$val <- 4:0 * -10
+      l$titl <- "Change in travel time:"
+      l$prefix <- "Change"
+    }
+  }
+  
+  return(l)
+}
+
+#### Preset colour palette
+prev_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 1),
+                         reverse = T)
+incd_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(-0.1, 3000),
+                         reverse = T)
+time_allhf_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 120),
+                               reverse = T)
+
+prev_diff_pal <- colorNumeric(palette = "Blues", na.color = "#00000000", domain = c(-0.13, 0),
+                              reverse = T)
+incd_diff_pal <- colorNumeric(palette = "Blues", na.color = "#00000000", domain = c(-20, 0),
+                              reverse = T)
+time_allhf_diff_pal <- colorNumeric(palette = "Blues", na.color = "#00000000", domain = c(-45, 0),
+                                    reverse = T)
