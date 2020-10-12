@@ -241,7 +241,7 @@ server <- function(input, output) {
   output$prev_overall <- renderInfoBox({
     prev_upd <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
     infoBox(
-      "District-wide prevalence per pixel",
+      "District-wide prevalence",
       value = round(prev_upd, 1) %>% paste0("%"),
       subtitle = ifelse(nrow(vals$hf_data) == ifelse(input$scenario == "wchps", 8, 5), "",
                         paste0(round(prev_upd - vals$prev_org, 1), "% from initial map")),
