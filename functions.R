@@ -17,7 +17,7 @@ update_prediction <- function(hfs, T.GC) {
   
   grid_newdf <- grid_newdf %>% 
     mutate(prev = predict(gam_mod1, grid_newdf, type = "response")) %>%
-    mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
+    mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000)
   
   return(grid_newdf)
 }
@@ -47,11 +47,11 @@ set_map_params <- function (metric, metric_type) {
     
   } else if (metric == "incd") {
     if (metric_type == "magn") {
-      l$val <- 0:6 * 500
-      l$titl <- "Incidence (per yr):"
+      l$val <- 0:8 * 50 + 200
+      l$titl <- "Incidence (per 1000 PYO):"
       l$prefix <- "Incidence"
     } else {
-      l$val <- 5:0 * -4
+      l$val <- 4:-1 * -10
       l$titl <- "Change in incidence:"
       l$prefix <- "Change"
     }
@@ -73,14 +73,14 @@ set_map_params <- function (metric, metric_type) {
 #### Preset colour palette
 prev_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 1),
                          reverse = T)
-incd_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(-0.1, 3000),
+incd_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(200, 600),
                          reverse = T)
 time_allhf_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 120),
                                reverse = T)
 
 prev_diff_pal <- colorNumeric(palette = "Blues", na.color = "#00000000", domain = c(-0.13, 0),
                               reverse = T)
-incd_diff_pal <- colorNumeric(palette = "Blues", na.color = "#00000000", domain = c(-20, 0),
+incd_diff_pal <- colorNumeric(palette = "Blues", na.color = "#00000000", domain = c(-40, 10),
                               reverse = T)
 time_allhf_diff_pal <- colorNumeric(palette = "Blues", na.color = "#00000000", domain = c(-45, 0),
                                     reverse = T)
