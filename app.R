@@ -2,6 +2,7 @@ rm(list = ls())
 
 library(shiny)
 library(shinydashboard)
+library(shinyalert)
 library(leaflet)
 library(geosphere)
 library(raster)
@@ -16,8 +17,10 @@ library(dplyr)
 library(readr)
 library(ggplot2)
 library(tibble)
+library(htmlwidgets)
 source("p2i_functions.R")
 source("functions.R", local = T)
+jsfile <- "https://rawgit.com/rowanwins/leaflet-easyPrint/gh-pages/dist/bundle.js"
 
 #### Import
 load('datafiles/gam_mod_v2-1.rda')
@@ -45,6 +48,7 @@ header <- dashboardHeader(
 )
 
 body <- dashboardBody(
+  tags$head(tags$script(src = jsfile)),
   fluidRow(
     column(width = 9,
            box(width = NULL, solidHeader = TRUE,
@@ -133,7 +137,24 @@ ui <- dashboardPage(
 
 #### Server logics
 server <- function(input, output) {
-  
+  showModal(modalDialog(
+    title = "Information",
+    HTML("This application showcases the use of interactive tool in helping
+    users to understand and explore the relationship between access to healthcare
+    (i.e., travel time to health facility) and malaria prevalence. We use the 
+    Bunkpurugu-Yunyoo district in Northern Ghana as a case study here, where series of 
+    cross-sectional surveys were conducted in 2010-2014 (Abuaku et al. 2018).
+    We use statistical model to infer the empirical relationship between travel time to
+    health facility and malaria prevalence. Adding new health facility shall reduce travel
+    distance and reduce malaria transmission. In this application, you can: <br/>
+    <ol>
+    <li>Add new health facility by clicking on any of the location on the map, and click 
+    'Add Facility' button on the right hand panel. Then, you can see what the model 
+    predicts by clicking 'Update prediction' button. </li>
+    <li>Choose to see what are the optimal locations for new health facilities by
+    using different criteria.</li>
+    </ol>")
+  ))
   # hf_org <- reactive(
   #   if (input$scenario == "wchps") {
   #     read_csv("datafiles/hf-locations.csv")
@@ -194,8 +215,16 @@ server <- function(input, output) {
                         lng = vals$hf_data$Longitude,
                         lat = vals$hf_data$Latitude,
                         popup = vals$hf_data$Name,
-                        icon = icons)
-      # mapview::addMouseCoordinates()
+                        icon = icons) %>%
+      onRender(
+        "function(el, x) {
+            L.easyPrint({
+              sizeModes: ['Current', 'A4Landscape', 'A4Portrait'],
+              filename: 'display-map',
+              exportOnly: true,
+              hideControlContainer: true
+            }).addTo(this);
+            }")
     
     # Choosing layer to display: Prevalence, Incidence or Travel time,
     # and Magnitude or differences
@@ -289,23 +318,38 @@ server <- function(input, output) {
     lat <- unlist(input$prev_map_click$lat)
     lon <- unlist(input$prev_map_click$lng)
     
-    tmp$hf_data <- tmp$hf_data %>% 
-      add_case(
-        Name = "Added Facility",
-        Latitude = round(lat, 5), 
-        Longitude = round(lon, 5),
-        Type = "User Defined")
-    
-    icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
-                          markerColor = icon_color(tmp$hf_data$Type))
-    
-    proxy <- leafletProxy("prev_map")
-    proxy %>% clearMarkers() %>%
-      addAwesomeMarkers(data = tmp$hf_data,
-                        lng = tmp$hf_data$Longitude,
-                        lat = tmp$hf_data$Latitude,
-                        popup = tmp$hf_data$Name, 
-                        icon = icons)
+    if (length(lat) == 0) {
+      showModal(modalDialog(
+        title = "Coordinate not found",
+        "Click on the location in the map where you want to add new health 
+                 facility. A red dot will appear, and click on the 
+                 'Add Facility' button to add it."
+      ))
+      
+      # shinyalert("Coordinate not found",
+      #            "Click on the location in the map where you want new health 
+      #            facility to be added. A red dot will appear, and click on the 
+      #            'Add Facility' button to add it.",
+      #            type = "error")
+    } else {
+      tmp$hf_data <- tmp$hf_data %>% 
+        add_case(
+          Name = "Added Facility",
+          Latitude = round(lat, 5), 
+          Longitude = round(lon, 5),
+          Type = "User Defined")
+      
+      icons <- awesomeIcons(icon = 'medkit', library = 'fa', iconColor = '#FFFFFF',
+                            markerColor = icon_color(tmp$hf_data$Type))
+      
+      proxy <- leafletProxy("prev_map")
+      proxy %>% clearMarkers() %>%
+        addAwesomeMarkers(data = tmp$hf_data,
+                          lng = tmp$hf_data$Longitude,
+                          lat = tmp$hf_data$Latitude,
+                          popup = tmp$hf_data$Name, 
+                          icon = icons)
+    }
   })
   
   ##
