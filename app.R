@@ -33,10 +33,10 @@ opt_xy_nochps <- read_csv("datafiles/opt_xy_nochps.csv")
 #### Initialize
 grid_df <- grid_df %>% 
   mutate(prev = predict(gam_mod1, grid_df, type = "response")) %>%
-  mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * pop_all)
+  mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000)
 
 prev_org <- sum(grid_df$prev * grid_df$pop_u5) * 100 / sum(grid_df$pop_u5)
-incd_org <- sum(grid_df$incd)
+incd_org <- sum(grid_df$incd * grid_df$pop_all) / sum(grid_df$pop_all)
 lid <- 1
 
 #### UI
@@ -73,7 +73,7 @@ body <- dashboardBody(
                               "Without existing CHPS" = "wochps")),
                radioButtons("metric", "Choose a metric to display :",
                             c("Prevalence (0 to 1) for children under 5 years old" = "prev",
-                              "Incidence (Number of cases per year) for all ages" = "incd",
+                              "Incidence per 1000 person year for all ages" = "incd",
                               "Travel time (min)" = "time_allhf")),
                radioButtons("metric_type", "Magnitude or Difference :",
                             c("Magnitude of the metric" = "magn",
@@ -252,11 +252,12 @@ server <- function(input, output) {
   
   ## Output: Incidence info box
   output$incd_overall <- renderInfoBox({
+    incd_upd <- sum(vals$grid$incd * vals$grid$pop_all) / sum(vals$grid$pop_all)
     infoBox(
-      "Total incidence per year",
-      value = round(sum(vals$grid$incd), 1),
+      "Incidence per 1000 person years observed",
+      value = round(incd_upd, 1),
       subtitle = ifelse(nrow(vals$hf_data) == ifelse(input$scenario == "wchps", 8, 5), "",
-                        paste0(round(sum(vals$grid$incd) - vals$incd_org, 1), 
+                        paste0(round(incd_upd - vals$incd_org, 1), 
                                " from initial map")),
       icon = icon("ambulance"),
       color = "red"
