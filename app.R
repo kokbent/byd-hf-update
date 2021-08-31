@@ -18,6 +18,7 @@ library(readr)
 library(ggplot2)
 library(tibble)
 library(htmlwidgets)
+library(arm)
 source("p2i_functions.R")
 source("functions.R", local = T)
 jsfile <- "https://rawgit.com/rowanwins/leaflet-easyPrint/gh-pages/dist/bundle.js"
@@ -34,12 +35,16 @@ opt_xy <- read_csv("datafiles/opt_xy.csv")
 opt_xy_nochps <- read_csv("datafiles/opt_xy_nochps.csv")
 
 #### Initialize
-grid_df <- grid_df %>% 
-  mutate(prev = predict(gam_mod1, grid_df, type = "response")) %>%
-  mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000)
+grid_df <- update_prediction(hf_org, T.GC)
 
 prev_org <- sum(grid_df$prev * grid_df$pop_u5) * 100 / sum(grid_df$pop_u5)
+prev_uci_org <- sum(grid_df$prev_uci * grid_df$pop_u5) * 100 / sum(grid_df$pop_u5)
+prev_lci_org <- sum(grid_df$prev_lci * grid_df$pop_u5) * 100 / sum(grid_df$pop_u5)
+
 incd_org <- sum(grid_df$incd * grid_df$pop_all) / sum(grid_df$pop_all)
+incd_uci_org <- sum(grid_df$incd_uci * grid_df$pop_all) / sum(grid_df$pop_all)
+incd_lci_org <- sum(grid_df$incd_lci * grid_df$pop_all) / sum(grid_df$pop_all)
+
 lid <- 1
 
 #### UI
@@ -176,7 +181,11 @@ server <- function(input, output) {
   vals$grid <- grid_df
   vals$grid_org <- grid_df
   vals$prev_org <- prev_org
+  vals$prev_uci_org <- prev_uci_org
+  vals$prev_lci_org <- prev_lci_org
   vals$incd_org <- incd_org
+  vals$incd_uci_org <- incd_uci_org
+  vals$incd_lci_org <- incd_lci_org
   
   
   ## Output: Data Table
@@ -269,11 +278,19 @@ server <- function(input, output) {
   ## Output: Prevalence info box
   output$prev_overall <- renderInfoBox({
     prev_upd <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
+    prev_uci_upd <- sum(vals$grid$prev_uci * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
+    prev_lci_upd <- sum(vals$grid$prev_lci * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
+    change <- round(prev_upd - vals$prev_org, 2)
+    tmp <- range(c(round(prev_uci_upd - vals$prev_uci_org, 2), round(prev_lci_upd - vals$prev_lci_org, 2)))
+    change_uci <- tmp[2]
+    change_lci <- tmp[1]
+    
     infoBox(
       "District-wide prevalence",
       value = round(prev_upd, 1) %>% paste0("%"),
       subtitle = ifelse(nrow(vals$hf_data) == ifelse(input$scenario == "wchps", 8, 5), "",
-                        paste0(round(prev_upd - vals$prev_org, 1), "% from initial map")),
+                        paste0(change, "% (", change_lci, " to ", change_uci, ") ",
+                               " from initial map")),
       icon = icon("heart"),
       color = "purple"
     )
@@ -282,11 +299,18 @@ server <- function(input, output) {
   ## Output: Incidence info box
   output$incd_overall <- renderInfoBox({
     incd_upd <- sum(vals$grid$incd * vals$grid$pop_all) / sum(vals$grid$pop_all)
+    incd_uci_upd <- sum(vals$grid$incd_uci * vals$grid$pop_all) / sum(vals$grid$pop_all)
+    incd_lci_upd <- sum(vals$grid$incd_lci * vals$grid$pop_all) / sum(vals$grid$pop_all)
+    change <- round(incd_upd - vals$incd_org, 2)
+    tmp <- range(c(round(incd_uci_upd - vals$incd_uci_org, 2), round(incd_lci_upd - vals$incd_lci_org, 2)))
+    change_uci <- tmp[2]
+    change_lci <- tmp[1]
+    
     infoBox(
       "Incidence per 1000 person years observed",
       value = round(incd_upd, 1),
       subtitle = ifelse(nrow(vals$hf_data) == ifelse(input$scenario == "wchps", 8, 5), "",
-                        paste0(round(incd_upd - vals$incd_org, 1), 
+                        paste0(change, " (", change_lci, " to ", change_uci, ") ",
                                " from initial map")),
       icon = icon("ambulance"),
       color = "red"
@@ -360,7 +384,11 @@ server <- function(input, output) {
       vals$grid <- grid_df
       vals$grid_org <- grid_df
       vals$prev_org <- prev_org
+      vals$prev_uci_org <- prev_uci_org
+      vals$prev_lci_org <- prev_lci_org
       vals$incd_org <- incd_org
+      vals$incd_uci_org <- incd_uci_org
+      vals$incd_lci_org <- incd_lci_org
       tmp$hf_data <- hf_org
     } else {
       vals$hf_data <- hf_org %>% 
@@ -370,7 +398,11 @@ server <- function(input, output) {
       tmp$hf_data <- hf_org %>%
         filter(Type != "CHPS")
       vals$prev_org <- sum(vals$grid$prev * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
-      vals$incd_org <- sum(vals$grid$incd)
+      vals$prev_uci_org <- sum(vals$grid$prev_uci * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
+      vals$prev_lci_org <- sum(vals$grid$prev_lci * vals$grid$pop_u5) * 100 / sum(vals$grid$pop_u5)
+      vals$incd_org <- sum(vals$grid$incd * vals$grid$pop_all) / sum(vals$grid$pop_all)
+      vals$incd_uci_org <- sum(vals$grid$incd_uci * vals$grid$pop_all) / sum(vals$grid$pop_all)
+      vals$incd_lci_org <- sum(vals$grid$incd_lci * vals$grid$pop_all) / sum(vals$grid$pop_all)
     }
   })
   
@@ -410,7 +442,7 @@ server <- function(input, output) {
                Latitude = round(lat, 5),
                Longitude = round(lng, 5),
                Type = "Optimization") %>%
-        select(-nhf, -metric, -lat, -lng)
+        dplyr::select(-nhf, -metric, -lat, -lng)
       hf_new <- bind_rows(hf_org, opt)
     } else {
       opt <- opt_xy_nochps %>%
@@ -419,7 +451,7 @@ server <- function(input, output) {
                Latitude = round(lat, 5),
                Longitude = round(lng, 5),
                Type = "Optimization") %>%
-        select(-nhf, -metric, -lat, -lng)
+        dplyr::select(-nhf, -metric, -lat, -lng)
       hf_new <- bind_rows(hf_org %>% filter(Type != "CHPS"), 
                           opt)
     }

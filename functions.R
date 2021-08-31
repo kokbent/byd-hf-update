@@ -15,9 +15,13 @@ update_prediction <- function(hfs, T.GC) {
     as.matrix()
   grid_newdf$time_allhf <- raster::extract(temp.raster, grid_xy)
   
-  grid_newdf <- grid_newdf %>% 
-    mutate(prev = predict(gam_mod1, grid_newdf, type = "response")) %>%
-    mutate(incd = sapply(prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000)
+  preds <- predict(gam_mod1, grid_newdf, type = "link", se.fit = T)
+  grid_newdf$prev <- invlogit(preds$fit)
+  grid_newdf$prev_uci <- invlogit(preds$fit + 1.96 * preds$se.fit)
+  grid_newdf$prev_lci <- invlogit(preds$fit - 1.96 * preds$se.fit)
+  grid_newdf$incd <- sapply(grid_newdf$prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000
+  grid_newdf$incd_uci <- sapply(grid_newdf$prev_uci, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000
+  grid_newdf$incd_lci <- sapply(grid_newdf$prev_lci, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000
   
   return(grid_newdf)
 }
