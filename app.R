@@ -83,7 +83,8 @@ body <- dashboardBody(
                radioButtons("metric", "Choose a metric to display :",
                             c("Prevalence (0 to 1) for children under 5 years old" = "prev",
                               "Incidence per 1000 person year for all ages" = "incd",
-                              "Travel time (min)" = "time_allhf")),
+                              "Travel time (min)" = "time_allhf",
+                              "Prevalence uncertainty" = "prev_unc")),
                radioButtons("metric_type", "Magnitude or Difference :",
                             c("Magnitude of the metric" = "magn",
                               "Difference from the baseline" = "diff"))

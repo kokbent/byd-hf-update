@@ -19,6 +19,7 @@ update_prediction <- function(hfs, T.GC) {
   grid_newdf$prev <- invlogit(preds$fit)
   grid_newdf$prev_uci <- invlogit(preds$fit + 1.96 * preds$se.fit)
   grid_newdf$prev_lci <- invlogit(preds$fit - 1.96 * preds$se.fit)
+  grid_newdf$prev_unc <- grid_newdf$prev_uci - grid_newdf$prev_lci
   grid_newdf$incd <- sapply(grid_newdf$prev, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000
   grid_newdf$incd_uci <- sapply(grid_newdf$prev_uci, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000
   grid_newdf$incd_lci <- sapply(grid_newdf$prev_lci, prev_u5_to_incd_all, age_struct = c(0.142, 0.266, 0.592)) * 1000
@@ -49,6 +50,10 @@ set_map_params <- function (metric, metric_type) {
       l$prefix <- "Change"
     }
     
+  } else if (metric == "prev_unc") {
+      l$val <- 0:8 * 0.05
+      l$titl <- "CI width:"
+      l$prefix <- "Prevalence Uncertainty"
   } else if (metric == "incd") {
     if (metric_type == "magn") {
       l$val <- 0:8 * 50 + 200
@@ -76,6 +81,8 @@ set_map_params <- function (metric, metric_type) {
 
 #### Preset colour palette
 prev_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 1),
+                         reverse = T)
+prev_unc_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(0, 0.4),
                          reverse = T)
 incd_pal <- colorNumeric(palette = "RdYlBu", na.color = "#00000000", domain = c(200, 600),
                          reverse = T)
